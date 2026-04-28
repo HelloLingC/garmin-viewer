@@ -31,7 +31,7 @@ Embed the recent running overview in a blog with:
 
 ```html
 <iframe
-  src="https://your-domain.example/embed/running?limit=5"
+  src="https://run.lycois.org/embed/running?limit=5"
   title="Recent running activity"
   width="100%"
   height="420"

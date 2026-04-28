@@ -1,5 +1,9 @@
 import { connection } from "next/server";
+import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { getCachedActivities } from "@/lib/activity-cache";
+import { ManualSyncSubmit } from "@/app/manual-sync-submit";
+import { syncActivities } from "@/lib/activity-sync";
 import {
   getConfiguredGarminDomain,
   getPublicGarminError,
@@ -25,6 +29,7 @@ export default async function Home({ searchParams }: HomeProps) {
   const params = await searchParams;
   const { start, limit } = parseActivityWindow(params);
   const result = await loadActivities(start, limit);
+  const syncMessage = getManualSyncMessage(params);
 
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100">
@@ -40,6 +45,11 @@ export default async function Home({ searchParams }: HomeProps) {
             <p className="mt-3 max-w-2xl text-base leading-7 text-neutral-300">
               Cached Garmin Connect data synced from the configured account.
             </p>
+            <form action={manualSyncActivities} className="mt-5">
+              <input name="start" type="hidden" value={result.start} />
+              <input name="limit" type="hidden" value={result.limit} />
+              <ManualSyncSubmit />
+            </form>
           </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:min-w-[520px]">
             <MetricCard label="Loaded" value={String(result.activities.length)} />
@@ -48,6 +58,19 @@ export default async function Home({ searchParams }: HomeProps) {
             <MetricCard label="Calories" value={formatTotalCalories(result.activities)} />
           </div>
         </header>
+
+        {syncMessage ? (
+          <div
+            className={`border p-4 text-sm ${
+              syncMessage.kind === "success"
+                ? "border-emerald-300/30 bg-emerald-950/40 text-emerald-100"
+                : "border-red-400/30 bg-red-950/60 text-red-100"
+            }`}
+            role="status"
+          >
+            {syncMessage.message}
+          </div>
+        ) : null}
 
         {result.error ? (
           <div className="border border-red-400/30 bg-red-950/60 p-5 text-red-100">
@@ -105,6 +128,30 @@ export default async function Home({ searchParams }: HomeProps) {
   );
 }
 
+async function manualSyncActivities(formData: FormData) {
+  "use server";
+
+  const { start, limit } = parseActivityWindow({
+    start: String(formData.get("start") ?? ""),
+    limit: String(formData.get("limit") ?? ""),
+  });
+  const redirectParams = new URLSearchParams({
+    start: String(start),
+    limit: String(limit),
+  });
+
+  try {
+    await syncActivities("manual");
+    revalidatePath("/");
+    redirectParams.set("sync", "success");
+  } catch (error) {
+    redirectParams.set("sync", "error");
+    redirectParams.set("message", getPublicGarminError(error).message);
+  }
+
+  redirect(`/?${redirectParams.toString()}`);
+}
+
 async function loadActivities(
   start: number,
   limit: number,
@@ -123,12 +170,43 @@ async function loadActivities(
   }
 }
 
+function getManualSyncMessage(
+  params?: Record<string, string | string[] | undefined>,
+) {
+  const sync = getParamValue(params, "sync");
+
+  if (sync === "success") {
+    return {
+      kind: "success",
+      message: "Manual sync completed.",
+    };
+  }
+
+  if (sync === "error") {
+    return {
+      kind: "error",
+      message:
+        getParamValue(params, "message") || "Manual sync failed.",
+    };
+  }
+
+  return undefined;
+}
+
 function getFallbackGarminDomain() {
   try {
     return getConfiguredGarminDomain();
   } catch {
     return "garmin.com";
   }
+}
+
+function getParamValue(
+  params: Record<string, string | string[] | undefined> | undefined,
+  key: string,
+) {
+  const value = params?.[key];
+  return Array.isArray(value) ? value[0] : value;
 }
 
 function MetricCard({ label, value }: { label: string; value: string }) {

@@ -10,9 +10,11 @@ import { fetchGarminActivitiesWindow } from "@/lib/garmin";
 const SYNC_BATCH_SIZE = 100;
 const DAILY_MAX_PAGES = 5;
 
+export type ActivitySyncKind = "initial" | "daily" | "manual";
+
 let activeSync: Promise<void> | undefined;
 
-export function syncActivitiesInBackground(kind: "initial" | "daily") {
+export function syncActivitiesInBackground(kind: ActivitySyncKind) {
   if (activeSync) {
     return activeSync;
   }
@@ -28,7 +30,7 @@ export function syncActivitiesInBackground(kind: "initial" | "daily") {
   return activeSync;
 }
 
-export async function syncActivities(kind: "initial" | "daily") {
+export async function syncActivities(kind: ActivitySyncKind) {
   const syncRunId = beginActivitySyncRun(kind);
 
   if (!syncRunId) {

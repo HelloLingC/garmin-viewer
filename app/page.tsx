@@ -1,6 +1,6 @@
 import { connection } from "next/server";
+import { getCachedActivities } from "@/lib/activity-cache";
 import {
-  getGarminActivities,
   getConfiguredGarminDomain,
   getPublicGarminError,
   parseActivityWindow,
@@ -38,8 +38,7 @@ export default async function Home({ searchParams }: HomeProps) {
               Activity Data
             </h1>
             <p className="mt-3 max-w-2xl text-base leading-7 text-neutral-300">
-              Server-side Garmin Connect data fetched with the configured
-              account credentials.
+              Cached Garmin Connect data synced from the configured account.
             </p>
           </div>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:min-w-[520px]">
@@ -80,7 +79,7 @@ export default async function Home({ searchParams }: HomeProps) {
               <ActivityTable activities={result.activities} />
             ) : (
               <p className="px-4 py-12 text-center text-neutral-400">
-                No Garmin activities were returned for this range.
+                No cached Garmin activities were returned for this range.
               </p>
             )}
           </div>
@@ -111,7 +110,7 @@ async function loadActivities(
   limit: number,
 ): Promise<PageActivitiesResult> {
   try {
-    return await getGarminActivities(start, limit);
+    return getCachedActivities(start, limit);
   } catch (error) {
     return {
       activities: [],

@@ -1,32 +1,27 @@
 import { connection } from "next/server";
+import { getCachedCurrentMonthRunningActivities } from "@/lib/activity-cache";
 import {
   getConfiguredGarminDomain,
-  getGarminRunningActivities,
   getPublicGarminError,
   type ActivitySummary,
   type GarminActivitiesResult,
 } from "@/lib/garmin";
 
-type EmbedRunningProps = {
-  searchParams?: Promise<Record<string, string | string[] | undefined>>;
-};
-
 type EmbedResult = GarminActivitiesResult & {
   error?: string;
+  periodLabel: string;
 };
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-export default async function RunningEmbed({ searchParams }: EmbedRunningProps) {
+export default async function RunningEmbed() {
   await connection();
 
-  const params = await searchParams;
-  const limit = parseLimit(params?.limit);
-  const result = await loadRunningActivities(limit);
+  const result = await loadRunningActivities();
 
   return (
-    <main className="min-h-screen bg-[#101412] p-3 text-neutral-100">
+    <main className="min-h-screen bg-[#101412] text-neutral-100">
       <section className="mx-auto w-full max-w-[760px] overflow-hidden border border-emerald-300/20 bg-[#151a17]">
         <header className="border-b border-white/10 px-4 py-3">
           <div className="flex items-start justify-between gap-3">
@@ -35,8 +30,11 @@ export default async function RunningEmbed({ searchParams }: EmbedRunningProps) 
                 Garmin Running
               </p>
               <h1 className="mt-1 text-xl font-semibold tracking-tight text-white">
-                Recent Running Overview
+                Current Month Running Overview
               </h1>
+              <p className="mt-1 text-xs text-neutral-500">
+                {result.periodLabel}
+              </p>
             </div>
             <div className="shrink-0 text-right text-[11px] text-neutral-500">
               <div>{result.domain}</div>
@@ -76,17 +74,25 @@ export default async function RunningEmbed({ searchParams }: EmbedRunningProps) 
   );
 }
 
-async function loadRunningActivities(limit: number): Promise<EmbedResult> {
+async function loadRunningActivities(): Promise<EmbedResult> {
+  const periodLabel = formatCurrentMonthLabel();
+
   try {
-    return await getGarminRunningActivities(limit);
+    const result = getCachedCurrentMonthRunningActivities();
+
+    return {
+      ...result,
+      periodLabel,
+    };
   } catch (error) {
     return {
       activities: [],
       fetchedAt: new Date().toISOString(),
       start: 0,
-      limit,
+      limit: 100,
       domain: getFallbackGarminDomain(),
       error: getPublicGarminError(error).message,
+      periodLabel,
     };
   }
 }
@@ -238,15 +244,11 @@ function DistanceTrendGraph({
   );
 }
 
-function parseLimit(value: string | string[] | undefined) {
-  const rawValue = Array.isArray(value) ? value[0] : value;
-  const parsed = Number.parseInt(rawValue ?? "", 10);
-
-  if (!Number.isFinite(parsed)) {
-    return 5;
-  }
-
-  return Math.min(Math.max(parsed, 1), 10);
+function formatCurrentMonthLabel() {
+  return new Date().toLocaleDateString(undefined, {
+    year: "numeric",
+    month: "long",
+  });
 }
 
 function totalDistance(activities: ActivitySummary[]) {

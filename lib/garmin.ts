@@ -55,14 +55,14 @@ export async function getGarminActivities(
   start = 0,
   limit = DEFAULT_LIMIT,
 ): Promise<GarminActivitiesResult> {
-  return getGarminActivitiesWindow(start, limit);
+  return fetchGarminActivitiesWindow(start, limit);
 }
 
 export async function getGarminRunningActivities(
   limit = 5,
 ): Promise<GarminActivitiesResult> {
   const fetchLimit = Math.min(Math.max(limit * 6, 20), MAX_LIMIT);
-  const result = await getGarminActivitiesWindow(0, fetchLimit);
+  const result = await fetchGarminActivitiesWindow(0, fetchLimit);
 
   return {
     ...result,
@@ -71,7 +71,7 @@ export async function getGarminRunningActivities(
   };
 }
 
-async function getGarminActivitiesWindow(
+export async function fetchGarminActivitiesWindow(
   start: number,
   limit: number,
 ): Promise<GarminActivitiesResult> {
@@ -128,7 +128,7 @@ export function getPublicGarminError(error: unknown) {
   };
 }
 
-function toActivitySummary(activity: IActivity): ActivitySummary {
+export function toActivitySummary(activity: IActivity): ActivitySummary {
   return {
     activityId: activity.activityId,
     activityName: activity.activityName,

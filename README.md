@@ -1,4 +1,4 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+Garmin Connect Dashboard
 
 ## Getting Started
 
@@ -13,6 +13,34 @@ pnpm dev
 # or
 bun dev
 ```
+
+Set the Garmin Connect credentials in `.env` before starting the server:
+
+```dotenv
+GARMIN_USERNAME="your.email@example.com"
+GARMIN_PASSWORD="your-password"
+GARMIN_DOMAIN="garmin.com"
+```
+
+Use `GARMIN_DOMAIN="garmin.cn"` for Garmin China accounts.
+
+The dashboard reads activity data at `/`. The same server-side fetch is also
+available as JSON at `/api/activities?start=0&limit=20`.
+
+Embed the recent running overview in a blog with:
+
+```html
+<iframe
+  src="https://your-domain.example/embed/running?limit=5"
+  title="Recent running activity"
+  width="100%"
+  height="420"
+  loading="lazy"
+  style="border:0;max-width:760px;width:100%;"
+></iframe>
+```
+
+The `limit` query parameter accepts `1` through `10`.
 
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 

@@ -26,6 +26,24 @@ export type GarminActivitiesResult = {
   domain: GarminDomain;
 };
 
+export type JsonPrimitive = string | number | boolean | null;
+export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue };
+
+export type TrainingLoadSummary = {
+  currentLoad: number | null;
+  loadRatio: number | null;
+  loadTrend: string | null;
+  trainingStatus: string | null;
+};
+
+export type GarminTrainingLoadResult = {
+  date: string;
+  fetchedAt: string;
+  domain: GarminDomain;
+  summary: TrainingLoadSummary;
+  data: JsonValue;
+};
+
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 100;
 
@@ -75,19 +93,8 @@ export async function fetchGarminActivitiesWindow(
   start: number,
   limit: number,
 ): Promise<GarminActivitiesResult> {
-  const username = process.env.GARMIN_USERNAME;
-  const password = process.env.GARMIN_PASSWORD;
   const domain = getConfiguredGarminDomain();
-
-  if (!username || !password) {
-    throw new GarminConfigurationError(
-      "Set GARMIN_USERNAME and GARMIN_PASSWORD before fetching Garmin activities.",
-    );
-  }
-
-  const client = new GarminConnect({ username, password }, domain);
-
-  await client.login();
+  const client = await createGarminClient(domain);
 
   const activities = await client.getActivities(start, limit);
 
@@ -97,6 +104,25 @@ export async function fetchGarminActivitiesWindow(
     start,
     limit,
     domain,
+  };
+}
+
+export async function getGarminTrainingLoad(
+  date = getGarminDateString(new Date()),
+): Promise<GarminTrainingLoadResult> {
+  const domain = getConfiguredGarminDomain();
+  const client = await createGarminClient(domain);
+  const normalizedDate = parseGarminDate(date);
+  const data = await client.get<JsonValue>(
+    `https://connectapi.${domain}/metrics-service/metrics/trainingstatus/aggregated/${normalizedDate}`,
+  );
+
+  return {
+    date: normalizedDate,
+    fetchedAt: new Date().toISOString(),
+    domain,
+    summary: summarizeTrainingLoad(data),
+    data,
   };
 }
 
@@ -146,6 +172,13 @@ export function toActivitySummary(activity: IActivity): ActivitySummary {
   };
 }
 
+export function parseTrainingLoadDate(
+  searchParams?: URLSearchParams | Record<string, string | string[] | undefined>,
+) {
+  const rawValue = getSearchParam(searchParams, "date");
+  return parseGarminDate(rawValue ?? getGarminDateString(new Date()));
+}
+
 function clampInteger(
   rawValue: string | undefined,
   fallback: number,
@@ -159,6 +192,261 @@ function clampInteger(
   }
 
   return Math.min(Math.max(parsed, min), max);
+}
+
+function getSearchParam(
+  searchParams:
+    | URLSearchParams
+    | Record<string, string | string[] | undefined>
+    | undefined,
+  key: string,
+) {
+  if (!searchParams) {
+    return undefined;
+  }
+
+  if (searchParams instanceof URLSearchParams) {
+    return searchParams.get(key) ?? undefined;
+  }
+
+  const value = searchParams[key];
+  return Array.isArray(value) ? value[0] : value;
+}
+
+async function createGarminClient(domain: GarminDomain) {
+  const username = process.env.GARMIN_USERNAME;
+  const password = process.env.GARMIN_PASSWORD;
+
+  if (!username || !password) {
+    throw new GarminConfigurationError(
+      "Set GARMIN_USERNAME and GARMIN_PASSWORD before fetching Garmin Connect data.",
+    );
+  }
+
+  const client = new GarminConnect({ username, password }, domain);
+
+  await client.login();
+
+  return client;
+}
+
+function parseGarminDate(value: string) {
+  const trimmed = value.trim();
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  throw new GarminConfigurationError(
+    'Training load date must use "YYYY-MM-DD" format.',
+  );
+}
+
+function getGarminDateString(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function summarizeTrainingLoad(data: JsonValue): TrainingLoadSummary {
+  return {
+    currentLoad: findNumericValue(data, [
+      "currentTrainingLoad",
+      "acuteTrainingLoad",
+      "trainingLoad",
+      "load",
+    ]),
+    loadRatio: findNumericValue(data, [
+      "loadRatio",
+      "trainingLoadRatio",
+      "acuteChronicWorkloadRatio",
+    ]),
+    loadTrend: findStringValue(data, [
+      "loadTrend",
+      "trainingLoadTrend",
+      "trend",
+    ]),
+    trainingStatus: findStringValue(data, [
+      "trainingStatus",
+      "trainingStatusFeedbackPhrase",
+      "status",
+    ]),
+  };
+}
+
+function findNumericValue(data: JsonValue, keys: string[]) {
+  const value = findValueByKey(data, keys);
+  return coerceFiniteNumber(value);
+}
+
+function findStringValue(data: JsonValue, keys: string[]) {
+  const value = findValueByKey(data, keys);
+  return coerceNonEmptyString(value);
+}
+
+function findValueByKey(data: JsonValue, keys: string[]): JsonValue | undefined {
+  if (!data || typeof data !== "object") {
+    return undefined;
+  }
+
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      const result = findValueByKey(item, keys);
+
+      if (result !== undefined) {
+        return result;
+      }
+    }
+
+    return undefined;
+  }
+
+  const keySet = new Set(keys);
+  const lowerKeySet = new Set(keys.map((key) => key.toLowerCase()));
+  const record = data as Record<string, JsonValue>;
+
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(data, key)) {
+      return record[key];
+    }
+  }
+
+  const keyValuePairKeyFields = [
+    "key",
+    "name",
+    "type",
+    "metric",
+    "metricType",
+    "statKey",
+    "metricKey",
+  ];
+  const keyValuePairValueFields = [
+    "value",
+    "val",
+    "amount",
+    "data",
+    "result",
+    "rawValue",
+  ];
+
+  for (const keyField of keyValuePairKeyFields) {
+    const candidateKey = record[keyField];
+
+    if (typeof candidateKey !== "string") {
+      continue;
+    }
+
+    const trimmedKey = candidateKey.trim();
+    const lowerTrimmedKey = trimmedKey.toLowerCase();
+
+    if (!keySet.has(trimmedKey) && !lowerKeySet.has(lowerTrimmedKey)) {
+      continue;
+    }
+
+    for (const valueField of keyValuePairValueFields) {
+      if (Object.prototype.hasOwnProperty.call(record, valueField)) {
+        return record[valueField];
+      }
+    }
+  }
+
+  for (const value of Object.values(data)) {
+    const result = findValueByKey(value, keys);
+
+    if (result !== undefined) {
+      return result;
+    }
+  }
+
+  return undefined;
+}
+
+function coerceFiniteNumber(value: JsonValue | undefined): number | null {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : null;
+  }
+
+  if (typeof value === "string") {
+    const normalized = value.trim().replaceAll(",", "");
+    const parsed = Number.parseFloat(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const parsed = coerceFiniteNumber(entry);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+    return null;
+  }
+
+  const record = value as Record<string, JsonValue>;
+  const candidateFields = [
+    "value",
+    "val",
+    "amount",
+    "rawValue",
+    "current",
+    "numericValue",
+  ];
+
+  for (const field of candidateFields) {
+    if (Object.prototype.hasOwnProperty.call(record, field)) {
+      const parsed = coerceFiniteNumber(record[field]);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+  }
+
+  return null;
+}
+
+function coerceNonEmptyString(value: JsonValue | undefined): string | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    return trimmed ? trimmed : null;
+  }
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(value) : null;
+  }
+
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const parsed = coerceNonEmptyString(entry);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+    return null;
+  }
+
+  const record = value as Record<string, JsonValue>;
+  const candidateFields = ["value", "label", "name", "display", "text", "phrase"];
+
+  for (const field of candidateFields) {
+    if (Object.prototype.hasOwnProperty.call(record, field)) {
+      const parsed = coerceNonEmptyString(record[field]);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+  }
+
+  return null;
 }
 
 function asNumber(value: number | null | undefined) {

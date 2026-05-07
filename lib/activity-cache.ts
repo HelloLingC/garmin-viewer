@@ -1,6 +1,6 @@
-import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import {
   getConfiguredGarminDomain,
   type ActivitySummary,
@@ -27,18 +27,27 @@ type SyncRunRow = {
   id: number;
 };
 
+type SqliteDatabase = {
+  exec(sql: string): void;
+  prepare(sql: string): {
+    all(...params: unknown[]): unknown[];
+    get(...params: unknown[]): unknown;
+    run(...params: unknown[]): { lastInsertRowid: number | bigint };
+  };
+};
+
 const DEFAULT_DB_PATH = ".data/garmin.sqlite";
 const RUNNING_SYNC_STALE_MS = 6 * 60 * 60 * 1000;
 
-let db: Database.Database | undefined;
+let db: SqliteDatabase | undefined;
 
 export function getActivityCacheDb() {
   if (!db) {
     const dbPath = getDatabasePath();
     mkdirSync(dirname(dbPath), { recursive: true });
-    db = new Database(dbPath);
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
+    db = new DatabaseSync(dbPath) as SqliteDatabase;
+    db.exec("PRAGMA journal_mode = WAL");
+    db.exec("PRAGMA foreign_keys = ON");
   }
 
   return db;
@@ -168,20 +177,20 @@ export function upsertCachedActivities(activities: ActivitySummary[]) {
       location_name,
       synced_at
     ) VALUES (
-      @activityId,
-      @activityName,
-      @activityType,
-      @startTimeLocal,
-      @distanceMeters,
-      @durationSeconds,
-      @movingDurationSeconds,
-      @elevationGainMeters,
-      @calories,
-      @averageHeartRate,
-      @maxHeartRate,
-      @averageSpeedMetersPerSecond,
-      @locationName,
-      @syncedAt
+      ?,
+      ?,
+      ?,
+      ?,
+      ?,
+      ?,
+      ?,
+      ?,
+      ?,
+      ?,
+      ?,
+      ?,
+      ?,
+      ?
     )
     ON CONFLICT(activity_id) DO UPDATE SET
       activity_name = excluded.activity_name,
@@ -199,16 +208,35 @@ export function upsertCachedActivities(activities: ActivitySummary[]) {
       synced_at = excluded.synced_at
   `);
 
-  const write = getActivityCacheDb().transaction((items: ActivitySummary[]) => {
-    for (const activity of items) {
-      statement.run({
-        ...activity,
-        syncedAt,
-      });
-    }
-  });
+  const database = getActivityCacheDb();
 
-  write(activities);
+  database.exec("BEGIN");
+
+  try {
+    for (const activity of activities) {
+      statement.run(
+        activity.activityId,
+        activity.activityName,
+        activity.activityType,
+        activity.startTimeLocal,
+        activity.distanceMeters,
+        activity.durationSeconds,
+        activity.movingDurationSeconds,
+        activity.elevationGainMeters,
+        activity.calories,
+        activity.averageHeartRate,
+        activity.maxHeartRate,
+        activity.averageSpeedMetersPerSecond,
+        activity.locationName,
+        syncedAt,
+      );
+    }
+
+    database.exec("COMMIT");
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 export function hasCachedActivities() {
@@ -235,12 +263,17 @@ export function beginActivitySyncRun(kind: string) {
   ensureActivityCacheSchema();
   failStaleSyncRuns();
 
-  const begin = getActivityCacheDb().transaction(() => {
+  const database = getActivityCacheDb();
+
+  database.exec("BEGIN");
+
+  try {
     const running = getActivityCacheDb()
       .prepare("SELECT id FROM sync_runs WHERE status = 'running' LIMIT 1")
       .get() as SyncRunRow | undefined;
 
     if (running) {
+      database.exec("COMMIT");
       return undefined;
     }
 
@@ -253,10 +286,13 @@ export function beginActivitySyncRun(kind: string) {
       )
       .run(kind, new Date().toISOString());
 
-    return Number(result.lastInsertRowid);
-  });
+    database.exec("COMMIT");
 
-  return begin();
+    return Number(result.lastInsertRowid);
+  } catch (error) {
+    database.exec("ROLLBACK");
+    throw error;
+  }
 }
 
 export function finishActivitySyncRun(

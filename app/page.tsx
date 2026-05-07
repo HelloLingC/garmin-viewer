@@ -6,9 +6,12 @@ import { ManualSyncSubmit } from "@/app/manual-sync-submit";
 import { syncActivities } from "@/lib/activity-sync";
 import {
   getConfiguredGarminDomain,
+  getGarminTrainingLoad,
   getPublicGarminError,
   parseActivityWindow,
+  parseTrainingLoadDate,
   type GarminActivitiesResult,
+  type GarminTrainingLoadResult,
   type ActivitySummary,
 } from "@/lib/garmin";
 
@@ -20,6 +23,10 @@ type PageActivitiesResult = GarminActivitiesResult & {
   error?: string;
 };
 
+type PageTrainingLoadResult = GarminTrainingLoadResult & {
+  error?: string;
+};
+
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
@@ -28,7 +35,11 @@ export default async function Home({ searchParams }: HomeProps) {
 
   const params = await searchParams;
   const { start, limit } = parseActivityWindow(params);
-  const result = await loadActivities(start, limit);
+  const trainingLoadDate = getSafeTrainingLoadDate(params);
+  const [result, trainingLoad] = await Promise.all([
+    loadActivities(start, limit),
+    loadTrainingLoad(trainingLoadDate),
+  ]);
   const syncMessage = getManualSyncMessage(params);
 
   return (
@@ -58,6 +69,8 @@ export default async function Home({ searchParams }: HomeProps) {
             <MetricCard label="Calories" value={formatTotalCalories(result.activities)} />
           </div>
         </header>
+
+        <TrainingLoadPanel trainingLoad={trainingLoad} />
 
         {syncMessage ? (
           <div
@@ -126,6 +139,36 @@ export default async function Home({ searchParams }: HomeProps) {
       </section>
     </main>
   );
+}
+
+async function loadTrainingLoad(date: string): Promise<PageTrainingLoadResult> {
+  try {
+    return await getGarminTrainingLoad(date);
+  } catch (error) {
+    return {
+      date,
+      fetchedAt: new Date().toISOString(),
+      domain: getFallbackGarminDomain(),
+      summary: {
+        currentLoad: null,
+        loadRatio: null,
+        loadTrend: null,
+        trainingStatus: null,
+      },
+      data: {},
+      error: getPublicGarminError(error).message,
+    };
+  }
+}
+
+function getSafeTrainingLoadDate(
+  params?: Record<string, string | string[] | undefined>,
+) {
+  try {
+    return parseTrainingLoadDate(params);
+  } catch {
+    return getLocalDateString(new Date());
+  }
 }
 
 async function manualSyncActivities(formData: FormData) {
@@ -216,6 +259,72 @@ function MetricCard({ label, value }: { label: string; value: string }) {
         {label}
       </dt>
       <dd className="mt-2 text-xl font-semibold text-white">{value}</dd>
+    </div>
+  );
+}
+
+function TrainingLoadPanel({
+  trainingLoad,
+}: {
+  trainingLoad: PageTrainingLoadResult;
+}) {
+  const { summary } = trainingLoad;
+
+  return (
+    <section className="border border-white/10 bg-neutral-900">
+      <div className="flex flex-col justify-between gap-3 border-b border-white/10 px-4 py-4 sm:flex-row sm:items-center">
+        <div>
+          <h2 className="text-lg font-semibold text-white">Training load</h2>
+          <p className="mt-1 text-sm text-neutral-400">
+            Garmin training status for {trainingLoad.date}; fetched{" "}
+            {formatFetchedAt(trainingLoad.fetchedAt)}
+          </p>
+        </div>
+        <a
+          className="inline-flex h-10 items-center justify-center border border-emerald-300/50 px-4 text-sm font-medium text-emerald-200 transition hover:bg-emerald-300/10"
+          href={`/api/training-load?date=${trainingLoad.date}`}
+        >
+          JSON
+        </a>
+      </div>
+
+      {trainingLoad.error ? (
+        <p className="px-4 py-5 text-sm leading-6 text-red-100">
+          {trainingLoad.error}
+        </p>
+      ) : (
+        <div className="grid gap-px bg-white/10 sm:grid-cols-4">
+          <TrainingLoadMetric
+            label="Current load"
+            value={formatNullableNumber(summary.currentLoad)}
+          />
+          <TrainingLoadMetric
+            label="Load ratio"
+            value={formatNullableNumber(summary.loadRatio)}
+          />
+          <TrainingLoadMetric
+            label="Trend"
+            value={formatNullableText(summary.loadTrend)}
+          />
+          <TrainingLoadMetric
+            label="Status"
+            value={formatNullableText(summary.trainingStatus)}
+          />
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TrainingLoadMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-h-24 bg-neutral-900 px-4 py-4">
+      <dt className="text-xs font-medium uppercase tracking-[0.14em] text-neutral-500">
+        {label}
+      </dt>
+      <dd className="mt-2 break-words text-xl font-semibold text-white">
+        {value}
+      </dd>
     </div>
   );
 }
@@ -376,6 +485,24 @@ function formatFetchedAt(value: string) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatNullableNumber(value: number | null) {
+  return value === null
+    ? "n/a"
+    : value.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function formatNullableText(value: string | null) {
+  return value ? formatActivityType(value) : "n/a";
+}
+
+function getLocalDateString(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
 }
 
 function formatActivityType(value: string) {

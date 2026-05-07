@@ -20,6 +20,8 @@ export default async function RunningEmbed() {
 
   const result = await loadRunningActivities();
 
+  const dailySeries = buildDailyDistanceSeries(result.activities);
+
   return (
     <main className="min-h-screen bg-[#101412] text-neutral-100">
       <section className="mx-auto w-full max-w-[760px] overflow-hidden border border-emerald-300/20 bg-[#151a17]">
@@ -56,17 +58,7 @@ export default async function RunningEmbed() {
               <Stat label="Avg Pace" value={formatPace(totalDuration(result.activities), totalDistance(result.activities))} />
             </div>
 
-            {result.activities.length > 1 ? (
-              <DistanceTrendGraph activities={result.activities} />
-            ) : result.activities.length === 1 ? (
-              <p className="px-4 py-8 text-center text-sm text-neutral-400">
-                More running activities are needed to draw a trend.
-              </p>
-            ) : (
-              <p className="px-4 py-8 text-center text-sm text-neutral-400">
-                No running activities were returned.
-              </p>
-            )}
+            <DistanceTrendGraph series={dailySeries} />
           </>
         )}
       </section>
@@ -109,19 +101,11 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 function DistanceTrendGraph({
-  activities,
+  series,
 }: {
-  activities: ActivitySummary[];
+  series: DailyDistancePoint[];
 }) {
-  const points = activities
-    .slice()
-    .reverse()
-    .map((activity) => ({
-      id: activity.activityId,
-      date: activity.startTimeLocal,
-      distanceKm: activity.distanceMeters / 1000,
-    }));
-  const distances = points.map((point) => point.distanceKm);
+  const distances = series.map((point) => point.distanceKm);
   const minDistance = Math.min(...distances);
   const maxDistance = Math.max(...distances);
   const range = maxDistance - minDistance || 1;
@@ -135,10 +119,12 @@ function DistanceTrendGraph({
   };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
-  const plotted = points.map((point, index) => {
+  const horizontalGridLines = 4;
+  const verticalGridLines = 6;
+  const plotted = series.map((point, index) => {
     const x =
       padding.left +
-      (points.length === 1 ? chartWidth / 2 : (index / (points.length - 1)) * chartWidth);
+      (series.length === 1 ? chartWidth / 2 : (index / (series.length - 1)) * chartWidth);
     const y =
       padding.top +
       chartHeight -
@@ -154,6 +140,7 @@ function DistanceTrendGraph({
     .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
     .join(" ");
   const areaPath = `${path} L ${plotted[plotted.length - 1].x} ${padding.top + chartHeight} L ${plotted[0].x} ${padding.top + chartHeight} Z`;
+  const seriesLabel = `${formatShortDate(series[0].date)} \u2013 ${formatShortDate(series[series.length - 1].date)}`;
 
   return (
     <section className="border-b border-white/10 px-4 py-4">
@@ -161,7 +148,7 @@ function DistanceTrendGraph({
         <div>
           <h2 className="text-sm font-semibold text-white">Distance trend</h2>
           <p className="mt-1 text-xs text-neutral-500">
-            Last {activities.length} running activities
+            Daily distance ({seriesLabel})
           </p>
         </div>
         <div className="text-right text-xs text-neutral-400">
@@ -176,6 +163,32 @@ function DistanceTrendGraph({
         role="img"
         viewBox={`0 0 ${width} ${height}`}
       >
+        <g stroke="rgba(255,255,255,0.07)" strokeWidth="1">
+          {Array.from({ length: verticalGridLines - 1 }, (_, index) => {
+            const x = padding.left + ((index + 1) / verticalGridLines) * chartWidth;
+            return (
+              <line
+                key={`grid-x-${index}`}
+                x1={x}
+                x2={x}
+                y1={padding.top}
+                y2={padding.top + chartHeight}
+              />
+            );
+          })}
+          {Array.from({ length: horizontalGridLines - 1 }, (_, index) => {
+            const y = padding.top + ((index + 1) / horizontalGridLines) * chartHeight;
+            return (
+              <line
+                key={`grid-y-${index}`}
+                x1={padding.left}
+                x2={padding.left + chartWidth}
+                y1={y}
+                y2={y}
+              />
+            );
+          })}
+        </g>
         <line
           stroke="rgba(255,255,255,0.1)"
           strokeWidth="1"
@@ -201,8 +214,10 @@ function DistanceTrendGraph({
           strokeLinejoin="round"
           strokeWidth="3"
         />
-        {plotted.map((point) => (
-          <g key={point.id}>
+        {plotted
+          .filter((point, index) => point.distanceKm > 0 || index === 0 || index === plotted.length - 1)
+          .map((point) => (
+          <g key={point.id ?? point.dateKey}>
             <circle
               cx={point.x}
               cy={point.y}
@@ -211,21 +226,10 @@ function DistanceTrendGraph({
               stroke="#34d399"
               strokeWidth="2"
             />
-            <text
-              fill="#d1d5db"
-              fontSize="11"
-              textAnchor="middle"
-              x={point.x}
-              y={point.y - 10}
-            >
-              {point.distanceKm.toLocaleString(undefined, {
-                maximumFractionDigits: 1,
-              })}
-            </text>
           </g>
         ))}
         <text fill="#737373" fontSize="11" x={padding.left} y={height - 10}>
-          {formatShortDate(points[0].date)}
+          {formatShortDate(series[0].date)}
         </text>
         <text
           fill="#737373"
@@ -234,7 +238,7 @@ function DistanceTrendGraph({
           x={padding.left + chartWidth}
           y={height - 10}
         >
-          {formatShortDate(points[points.length - 1].date)}
+          {formatShortDate(series[series.length - 1].date)}
         </text>
         <text fill="#737373" fontSize="11" x="0" y={padding.top + 4}>
           km
@@ -242,6 +246,58 @@ function DistanceTrendGraph({
       </svg>
     </section>
   );
+}
+
+type DailyDistancePoint = {
+  dateKey: string;
+  date: string;
+  distanceKm: number;
+  id?: number;
+};
+
+function buildDailyDistanceSeries(activities: ActivitySummary[]): DailyDistancePoint[] {
+  const now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), 1, 12, 0, 0, 0);
+  const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0, 0);
+  const totalsByDate = new Map<string, number>();
+
+  for (const activity of activities) {
+    const key = toDateKey(activity.startTimeLocal);
+    totalsByDate.set(key, (totalsByDate.get(key) ?? 0) + activity.distanceMeters / 1000);
+  }
+
+  const points: DailyDistancePoint[] = [];
+  for (let cursor = new Date(start); cursor <= end; cursor.setDate(cursor.getDate() + 1)) {
+    const dateKey = toLocalDateKey(cursor);
+    points.push({
+      dateKey,
+      date: dateKey,
+      distanceKm: totalsByDate.get(dateKey) ?? 0,
+    });
+  }
+
+  if (points.length === 0) {
+    const dateKey = toLocalDateKey(end);
+    return [{ dateKey, date: dateKey, distanceKm: totalsByDate.get(dateKey) ?? 0 }];
+  }
+
+  return points;
+}
+
+function toDateKey(value: string) {
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    return toLocalDateKey(parsed);
+  }
+
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})/);
+  return match ? match[1] : value;
+}
+
+function toLocalDateKey(date: Date) {
+  return `${date.getFullYear()}-${(date.getMonth() + 1)
+    .toString()
+    .padStart(2, "0")}-${date.getDate().toString().padStart(2, "0")}`;
 }
 
 function formatCurrentMonthLabel() {
@@ -292,6 +348,19 @@ function formatPace(seconds: number, meters: number) {
 }
 
 function formatShortDate(value: string) {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) {
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const localDate = new Date(year, month - 1, day);
+
+    return localDate.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+    });
+  }
+
   const date = new Date(value);
 
   if (Number.isNaN(date.getTime())) {

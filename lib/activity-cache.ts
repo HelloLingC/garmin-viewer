@@ -156,6 +156,45 @@ export function getCachedCurrentMonthRunningActivities(): GarminActivitiesResult
   };
 }
 
+export function getCachedYearlyRunningStats() {
+  ensureActivityCacheSchema();
+
+  const rows = getActivityCacheDb()
+    .prepare(
+      `
+      SELECT
+        substr(start_time_local, 1, 4) AS year,
+        SUM(distance_meters) / 1000.0 AS distance_km,
+        SUM(moving_duration_seconds) AS total_seconds
+      FROM activities
+      WHERE lower(activity_type) LIKE '%running%'
+      GROUP BY substr(start_time_local, 1, 4)
+      ORDER BY year DESC
+    `,
+    )
+    .all() as { year: string; distance_km: number; total_seconds: number }[];
+
+  return {
+    yearly: rows.map((r) => {
+      const distanceKm = Math.round(r.distance_km * 100) / 100;
+      const totalHours = Math.round((r.total_seconds / 3600) * 100) / 100;
+      const paceMinPerKm =
+        distanceKm > 0
+          ? Math.round(((r.total_seconds / 60) / distanceKm) * 100) / 100
+          : 0;
+
+      return {
+        year: Number(r.year),
+        distanceKm,
+        totalHours,
+        paceMinPerKm,
+      };
+    }),
+    fetchedAt: getCacheFetchedAt(),
+    domain: getConfiguredGarminDomain(),
+  };
+}
+
 export function upsertCachedActivities(activities: ActivitySummary[]) {
   ensureActivityCacheSchema();
 

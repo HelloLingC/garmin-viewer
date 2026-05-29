@@ -31,9 +31,14 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue
 
 export type TrainingLoadSummary = {
   currentLoad: number | null;
+  chronicLoad: number | null;
   loadRatio: number | null;
   loadTrend: string | null;
   trainingStatus: string | null;
+  vo2Max: number | null;
+  aerobicLow: number | null;
+  aerobicHigh: number | null;
+  anaerobic: number | null;
 };
 
 export type GarminTrainingLoadResult = {
@@ -253,25 +258,47 @@ function getGarminDateString(date: Date) {
 function summarizeTrainingLoad(data: JsonValue): TrainingLoadSummary {
   return {
     currentLoad: findNumericValue(data, [
+      "dailyTrainingLoadAcute",
       "currentTrainingLoad",
       "acuteTrainingLoad",
       "trainingLoad",
       "load",
     ]),
+    chronicLoad: findNumericValue(data, [
+      "dailyTrainingLoadChronic",
+      "chronicTrainingLoad",
+    ]),
     loadRatio: findNumericValue(data, [
+      "dailyAcuteChronicWorkloadRatio",
       "loadRatio",
       "trainingLoadRatio",
       "acuteChronicWorkloadRatio",
     ]),
     loadTrend: findStringValue(data, [
+      "acwrStatus",
       "loadTrend",
       "trainingLoadTrend",
       "trend",
     ]),
-    trainingStatus: findStringValue(data, [
-      "trainingStatus",
-      "trainingStatusFeedbackPhrase",
-      "status",
+    trainingStatus: mapTrainingStatusLabel(
+      findStringValue(data, [
+        "trainingStatusFeedbackPhrase",
+        "trainingStatus",
+        "status",
+      ]),
+    ),
+    vo2Max: findNumericValue(data, [
+      "vo2MaxPreciseValue",
+      "vo2MaxValue",
+    ]),
+    aerobicLow: findNumericValue(data, [
+      "monthlyLoadAerobicLow",
+    ]),
+    aerobicHigh: findNumericValue(data, [
+      "monthlyLoadAerobicHigh",
+    ]),
+    anaerobic: findNumericValue(data, [
+      "monthlyLoadAnaerobic",
     ]),
   };
 }
@@ -408,6 +435,58 @@ function coerceFiniteNumber(value: JsonValue | undefined): number | null {
   }
 
   return null;
+}
+
+const TRAINING_STATUS_LABELS: Record<number, string> = {
+  0: "Detraining",
+  1: "Peaking",
+  2: "Unproductive",
+  3: "Maintaining",
+  4: "Productive",
+  5: "Recovery",
+  6: "No Status",
+  7: "High Training Load",
+  8: "Low Training Load",
+  9: "Optimal",
+};
+
+const TRAINING_STATUS_PHRASES: Record<string, string> = {
+  DETRAINING: "Detraining",
+  PEAKING: "Peaking",
+  UNPRODUCTIVE: "Unproductive",
+  MAINTAINING: "Maintaining",
+  PRODUCTIVE: "Productive",
+  RECOVERY: "Recovery",
+  NO_STATUS: "No Status",
+  HIGH_TRAINING_LOAD: "High Training Load",
+  LOW_TRAINING_LOAD: "Low Training Load",
+  OPTIMAL: "Optimal",
+  AEROBIC_LOW_SHORTAGE: "Aerobic Low Shortage",
+  AEROBIC_HIGH_SHORTAGE: "Aerobic High Shortage",
+  ANAEROBIC_SHORTAGE: "Anaerobic Shortage",
+};
+
+function mapTrainingStatusLabel(value: string | null): string | null {
+  if (value === null) return null;
+
+  // Handle numeric status codes (e.g. "5")
+  const numericValue = Number.parseInt(value, 10);
+  if (Number.isFinite(numericValue) && numericValue in TRAINING_STATUS_LABELS) {
+    return TRAINING_STATUS_LABELS[numericValue];
+  }
+
+  // Handle phrase format like "RECOVERY_2" → extract base status
+  const basePhrase = value.replace(/_\d+$/, "");
+  if (basePhrase in TRAINING_STATUS_PHRASES) {
+    return TRAINING_STATUS_PHRASES[basePhrase];
+  }
+
+  // Fallback: convert SNAKE_CASE to Title Case
+  return value
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
 }
 
 function coerceNonEmptyString(value: JsonValue | undefined): string | null {

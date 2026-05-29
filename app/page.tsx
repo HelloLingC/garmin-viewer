@@ -151,9 +151,14 @@ async function loadTrainingLoad(date: string): Promise<PageTrainingLoadResult> {
       domain: getFallbackGarminDomain(),
       summary: {
         currentLoad: null,
+        chronicLoad: null,
         loadRatio: null,
         loadTrend: null,
         trainingStatus: null,
+        vo2Max: null,
+        aerobicLow: null,
+        aerobicHigh: null,
+        anaerobic: null,
       },
       data: {},
       error: getPublicGarminError(error).message,
@@ -299,6 +304,10 @@ function TrainingLoadPanel({
             value={formatNullableNumber(summary.currentLoad)}
           />
           <TrainingLoadMetric
+            label="Chronic load"
+            value={formatNullableNumber(summary.chronicLoad)}
+          />
+          <TrainingLoadMetric
             label="Load ratio"
             value={formatNullableNumber(summary.loadRatio)}
           />
@@ -309,6 +318,22 @@ function TrainingLoadPanel({
           <TrainingLoadMetric
             label="Status"
             value={formatNullableText(summary.trainingStatus)}
+          />
+          <TrainingLoadMetric
+            label="VO₂ Max"
+            value={formatNullableNumber(summary.vo2Max)}
+          />
+          <TrainingLoadMetric
+            label="Aerobic low"
+            value={formatNullableNumber(summary.aerobicLow)}
+          />
+          <TrainingLoadMetric
+            label="Aerobic high"
+            value={formatNullableNumber(summary.aerobicHigh)}
+          />
+          <TrainingLoadMetric
+            label="Anaerobic"
+            value={formatNullableNumber(summary.anaerobic)}
           />
         </div>
       )}

@@ -6,11 +6,22 @@ export const dynamic = "force-dynamic";
 
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
 
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "https://lycois.org",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Max-Age": "86400",
+};
+
 let cachedResult: ReturnType<typeof getCachedYearlyRunningStats> | null = null;
 let cachedAt = 0;
 
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: CORS_HEADERS });
+}
+
 /**
- * GET /api/yearly-running
+ * GET https://run.lycois.org/api/yearly-running
  *
  * 获取按年汇总的跑步统计数据（跑量、时间、平均配速）。
  * 数据来源为本地 SQLite 缓存，由后台同步任务定期从 Garmin Connect 拉取。
@@ -59,20 +70,20 @@ export async function GET() {
   try {
     const now = Date.now();
     if (cachedResult && now - cachedAt < CACHE_TTL_MS) {
-      return Response.json(cachedResult);
+      return Response.json(cachedResult, { headers: CORS_HEADERS });
     }
 
     const result = getCachedYearlyRunningStats();
     cachedResult = result;
     cachedAt = now;
 
-    return Response.json(result);
+    return Response.json(result, { headers: CORS_HEADERS });
   } catch (error) {
     const publicError = getPublicGarminError(error);
 
     return Response.json(
       { error: publicError.message },
-      { status: publicError.status },
+      { status: publicError.status, headers: CORS_HEADERS },
     );
   }
 }

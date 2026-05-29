@@ -8,18 +8,70 @@ import {
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const CORS_HEADERS: Record<string, string> = {
+  "Access-Control-Allow-Origin": "https://lycois.org",
+  "Access-Control-Allow-Methods": "GET, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Max-Age": "86400",
+};
+
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: CORS_HEADERS });
+}
+
+/**
+ * GET /api/training-load
+ *
+ * 获取 Garmin Training Load 数据（当前训练负荷、负荷比、趋势、训练状态）。
+ * 数据实时从 Garmin Connect 拉取，不经过 SQLite 缓存。
+ *
+ * @route GET /api/training-load
+ *
+ * @query date - 可选，格式 YYYY-MM-DD，默认今天
+ *
+ * @returns 200 - 成功响应
+ * ```json
+ * {
+ *   "date": "2026-05-29",
+ *   "fetchedAt": "2026-05-29T12:00:00.000Z",
+ *   "domain": "garmin.com",
+ *   "summary": {
+ *     "currentLoad": 268,
+ *     "loadRatio": 1.1,
+ *     "loadTrend": "OPTIMAL",
+ *     "trainingStatus": "Recovery"
+ *   },
+ *   "data": { ... }
+ * }
+ * ```
+ *
+ * @field date           - 查询日期（YYYY-MM-DD）
+ * @field fetchedAt      - 数据获取时间（ISO 8601）
+ * @field domain         - Garmin 域名（"garmin.com" 或 "garmin.cn"）
+ * @field summary        - 提取后的关键指标
+ * @field currentLoad    - 当前训练负荷（急性负荷），无数据时为 null
+ * @field loadRatio      - 急性/慢性负荷比（ACWR），无数据时为 null
+ * @field loadTrend      - 负荷趋势状态文本，无数据时为 null
+ * @field trainingStatus - 训练状态文本（如 "Productive"、"Recovery"），无数据时为 null
+ * @field data           - Garmin Connect 原始响应数据
+ *
+ * @returns 500 - 服务端错误
+ * ```json
+ * { "error": "错误描述" }
+ * ```
+ */
 export async function GET(request: NextRequest) {
   try {
     const date = parseTrainingLoadDate(request.nextUrl.searchParams);
     const result = await getGarminTrainingLoad(date);
 
-    return Response.json(result);
+    return Response.json(result, { headers: CORS_HEADERS });
   } catch (error) {
     const publicError = getPublicGarminError(error);
 
     return Response.json(
       { error: publicError.message },
-      { status: publicError.status },
+      { status: publicError.status, headers: CORS_HEADERS },
     );
   }
 }

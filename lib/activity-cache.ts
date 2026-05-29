@@ -5,6 +5,9 @@ import {
   getConfiguredGarminDomain,
   type ActivitySummary,
   type GarminActivitiesResult,
+  type GarminTrainingLoadResult,
+  type JsonValue,
+  type TrainingLoadSummary,
 } from "@/lib/garmin";
 
 type ActivityRow = {
@@ -99,6 +102,25 @@ export function ensureActivityCacheSchema() {
 
     CREATE INDEX IF NOT EXISTS idx_sync_runs_status_started_at
       ON sync_runs (status, started_at);
+
+    CREATE TABLE IF NOT EXISTS training_load_cache (
+      cache_date TEXT PRIMARY KEY,
+      current_load REAL,
+      chronic_load REAL,
+      load_ratio REAL,
+      load_trend TEXT,
+      training_status TEXT,
+      vo2_max REAL,
+      aerobic_low REAL,
+      aerobic_high REAL,
+      anaerobic REAL,
+      raw_data TEXT NOT NULL,
+      fetched_at TEXT NOT NULL,
+      domain TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_training_load_cache_fetched_at
+      ON training_load_cache (fetched_at DESC);
   `);
 }
 
@@ -412,4 +434,113 @@ function toActivitySummary(row: unknown) {
     averageSpeedMetersPerSecond: activity.average_speed_meters_per_second,
     locationName: activity.location_name,
   };
+}
+
+// --- Training load cache ---
+
+const TRAINING_LOAD_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+type TrainingLoadCacheRow = {
+  cache_date: string;
+  current_load: number | null;
+  chronic_load: number | null;
+  load_ratio: number | null;
+  load_trend: string | null;
+  training_status: string | null;
+  vo2_max: number | null;
+  aerobic_low: number | null;
+  aerobic_high: number | null;
+  anaerobic: number | null;
+  raw_data: string;
+  fetched_at: string;
+  domain: string;
+};
+
+export function getCachedTrainingLoad(
+  date: string,
+): GarminTrainingLoadResult | null {
+  ensureActivityCacheSchema();
+
+  const row = getActivityCacheDb()
+    .prepare("SELECT * FROM training_load_cache WHERE cache_date = ?")
+    .get(date) as TrainingLoadCacheRow | undefined;
+
+  if (!row) {
+    return null;
+  }
+
+  return {
+    date: row.cache_date,
+    fetchedAt: row.fetched_at,
+    domain: row.domain as "garmin.com" | "garmin.cn",
+    summary: {
+      currentLoad: row.current_load,
+      chronicLoad: row.chronic_load,
+      loadRatio: row.load_ratio,
+      loadTrend: row.load_trend,
+      trainingStatus: row.training_status,
+      vo2Max: row.vo2_max,
+      aerobicLow: row.aerobic_low,
+      aerobicHigh: row.aerobic_high,
+      anaerobic: row.anaerobic,
+    },
+    data: JSON.parse(row.raw_data) as JsonValue,
+  };
+}
+
+export function isTrainingLoadCacheStale(date: string): boolean {
+  ensureActivityCacheSchema();
+
+  const row = getActivityCacheDb()
+    .prepare("SELECT fetched_at FROM training_load_cache WHERE cache_date = ?")
+    .get(date) as { fetched_at: string } | undefined;
+
+  if (!row) {
+    return true;
+  }
+
+  return Date.now() - new Date(row.fetched_at).getTime() > TRAINING_LOAD_TTL_MS;
+}
+
+export function upsertCachedTrainingLoad(result: GarminTrainingLoadResult) {
+  ensureActivityCacheSchema();
+
+  getActivityCacheDb()
+    .prepare(
+      `
+      INSERT INTO training_load_cache (
+        cache_date, current_load, chronic_load, load_ratio, load_trend,
+        training_status, vo2_max, aerobic_low, aerobic_high, anaerobic,
+        raw_data, fetched_at, domain
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(cache_date) DO UPDATE SET
+        current_load = excluded.current_load,
+        chronic_load = excluded.chronic_load,
+        load_ratio = excluded.load_ratio,
+        load_trend = excluded.load_trend,
+        training_status = excluded.training_status,
+        vo2_max = excluded.vo2_max,
+        aerobic_low = excluded.aerobic_low,
+        aerobic_high = excluded.aerobic_high,
+        anaerobic = excluded.anaerobic,
+        raw_data = excluded.raw_data,
+        fetched_at = excluded.fetched_at,
+        domain = excluded.domain
+    `,
+    )
+    .run(
+      result.date,
+      result.summary.currentLoad,
+      result.summary.chronicLoad,
+      result.summary.loadRatio,
+      result.summary.loadTrend,
+      result.summary.trainingStatus,
+      result.summary.vo2Max,
+      result.summary.aerobicLow,
+      result.summary.aerobicHigh,
+      result.summary.anaerobic,
+      JSON.stringify(result.data),
+      result.fetchedAt,
+      result.domain,
+    );
 }

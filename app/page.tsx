@@ -1,7 +1,12 @@
 import { connection } from "next/server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { getCachedActivities } from "@/lib/activity-cache";
+import {
+  getCachedActivities,
+  getCachedTrainingLoad,
+  isTrainingLoadCacheStale,
+  upsertCachedTrainingLoad,
+} from "@/lib/activity-cache";
 import { ManualSyncSubmit } from "@/app/manual-sync-submit";
 import { syncActivities } from "@/lib/activity-sync";
 import {
@@ -143,8 +148,21 @@ export default async function Home({ searchParams }: HomeProps) {
 
 async function loadTrainingLoad(date: string): Promise<PageTrainingLoadResult> {
   try {
-    return await getGarminTrainingLoad(date);
+    const cached = getCachedTrainingLoad(date);
+    if (cached && !isTrainingLoadCacheStale(date)) {
+      return cached;
+    }
+
+    const result = await getGarminTrainingLoad(date);
+    upsertCachedTrainingLoad(result);
+
+    return result;
   } catch (error) {
+    const cached = getCachedTrainingLoad(date);
+    if (cached) {
+      return cached;
+    }
+
     return {
       date,
       fetchedAt: new Date().toISOString(),
